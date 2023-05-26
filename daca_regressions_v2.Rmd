@@ -1,0 +1,569 @@
+---
+title: "daca_regressions_v2"
+output: html_document
+date: "2023-04-15"
+editor_options: 
+  chunk_output_type: console
+---
+
+- DACA eligibility criteria:
+  - Under the age of 31 as of June 15, 2012 (Born on or after 6/16/1981);
+  - Came to the United States before their 16th birthday;
+  - Have continuously resided in the United States since June 15, 2007, up to the present time;
+  - Were physically present in the United States on June 15, 2012, and at the time of making their request for consideration of deferred action with USCIS;
+  - Had no lawful status on June 15, 2012;
+  - Are currently in school, have graduated or obtained a certificate of completion from high school, have obtained a general education development (GED) certificate, or are an honorably discharged veteran of the Coast Guard or Armed Forces of the United States; and
+  - Have not been convicted of a felony, significant misdemeanor, or three or more other misdemeanors, and do not otherwise pose a threat to national security or public safety.
+  
+  # Importing & Setup
+```{r message=FALSE, warning=FALSE}
+# setwd
+#setwd("~")
+
+# import library
+library(tidyverse)
+library(fixest)
+library(modelsummary)
+
+# import datasets
+df <- read_csv("new_data/clean_non_cit_cali_2005_2021.csv")
+df <- df |> 
+  rename(year = survey_year)
+
+# mexicans only
+mex_df <- df |> 
+  filter(hisp == 2,
+         year >= 2008) |> 
+  rename(age = agep) |> 
+  mutate(hs_only = ifelse(schl == 16, 1, 0))
+```
+
+
+# Sample 3: All non-citizens ages 18-40
+```{r}
+sample_3 <- mex_df |> 
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18)
+```
+
+
+### Working (dummy variable)
+```{r}
+# creating DiD
+did_sample_3_working <- feols(working ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca + age + years_of_education + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### Unemployed
+```{r}
+# creating DiD
+did_sample_3_unemployed <- feols(unemployed ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca + age + years_of_education + male + married | year +
+                     puma, data = sample_3)
+```
+
+
+### Income: pernp
+```{r}
+# creating DiD
+did_sample_3_pernp <- feols(pernp ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca + age^2 + years_of_education + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### Income: log(pernp + 1)
+```{r}
+did_sample_3_pernp_log <- feols(log(pernp + 1) ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca + age^2 + years_of_education + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### Hours per week: wkhp
+```{r}
+# creating DiD
+did_sample_3_wkhp <- feols(wkhp ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca + age + years_of_education + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### Self-employed
+```{r}
+# creating DiD
+did_sample_3_self_employed <- feols(self_employed ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca + age + years_of_education + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### high school or equivalent
+```{r}
+# creating DiD
+did_sample_3_hs_or_equiv <- feols(high_school_and_equiv ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca + age + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### regular high school degree only
+```{r}
+did_sample_3_hs_only <- feols(hs_only ~ interaction_daca_eligible_post_daca + daca_eligible +
+                                post_daca + age + male + married +
+                                unemployed | year + puma, data = sample_3)
+```
+
+
+### GED
+```{r}
+# creating DiD
+did_sample_3_ged <- feols(ged ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca + age + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### Attended college
+```{r}
+# creating DiD
+did_sample_3_attend_college <- feols(attended_college  ~ interaction_daca_eligible_post_daca +
+                                       daca_eligible + post_daca + age + male + 
+                                       married + age + unemployed | year
+                                     + puma, data = sample_3)
+```
+
+
+```{r}
+# getting coefficient names to rename
+coef_names <- c("daca eligible * post daca", "daca eligible")
+
+# create panel
+models <- list(
+    "Worked" = did_sample_3_working,
+    "Unemployed" = did_sample_3_unemployed,
+    "Income" = did_sample_3_pernp,
+    "Log(Income + 1)" = did_sample_3_pernp_log,
+    "Hours Worked" = did_sample_3_wkhp,
+    "Self Employed" = did_sample_3_self_employed,
+    "High School or Equivalent" = did_sample_3_hs_or_equiv,
+    "High School Only" = did_sample_3_hs_only,
+    "GED" = did_sample_3_ged,
+    "Attended College" = did_sample_3_attend_college
+)
+
+modelsummary(models)
+
+# creating reg output panels
+### separate education and labor outcomes
+modelsummary(
+  models,
+  coef_omit = c(-1, -2),
+  coef_rename = coef_names,
+  estimate = "{estimate}{stars}",
+  gof_map = c("nobs", "r.squared"),
+  stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  title = "Non-Citizen Mexicans Ages 18-40",
+  notes = "This table reports the estimate from the DiD equation with all controls and fixed effects. ***Significant at the 1% level. **Significant at the 5% level. *Significant at the 10% Level."
+)
+```
+
+```{r}
+# getting coefficient names to rename
+coef_names <- c("daca eligible * post daca", "daca eligible")
+
+# create panel
+labor_models <- list(
+    "Worked" = did_sample_3_working,
+    "Unemployed" = did_sample_3_unemployed,
+    "Income" = did_sample_3_pernp,
+    "Hours Worked" = did_sample_3_wkhp,
+    "Self Employed" = did_sample_3_self_employed
+)
+
+education_models <- list(
+    #"High School or Equivalent" = did_sample_3_hs_or_equiv,
+    #"High School Only" = did_sample_3_hs_only,
+    "GED" = did_sample_3_ged,
+    "Attended College" = did_sample_3_attend_college
+)
+
+# creating reg output panels
+### separate labor outcomes
+modelsummary(
+  labor_models,
+  coef_omit = c(-1, -2),
+  coef_rename = coef_names,
+  estimate = "{estimate}{stars}",
+  gof_map = c("nobs", "r.squared", "vcov.type"),
+  stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  title = "Non-Citizen Mexicans Ages 18-40: Labor Outcomes",
+  notes = "This table reports the estimate from the DiD equation with all controls and fixed effects. ***Significant at the 1% level. **Significant at the 5% level. *Significant at the 10% Level."
+)
+
+### educational outcomes
+modelsummary(
+  education_models,
+  coef_omit = c(-1, -2),
+  coef_rename = coef_names,
+  estimate = "{estimate}{stars}",
+  gof_map = c("nobs", "r.squared", "vcov.type"),
+  stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  title = "Non-Citizen Mexicans Ages 18-40: Educational Outcomes",
+  notes = "This table reports the estimate from the DiD equation with all controls and fixed effects. ***Significant at the 1% level. **Significant at the 5% level. *Significant at the 10% Level."
+)
+```
+
+
+###############################################################################
+# Linear Trend Lines ##########################################################
+###############################################################################
+
+### Working (dummy variable)
+```{r}
+# creating DiD
+est_did_pernp <- feols(pernp ~ i(factor_var = year, var = interaction_daca_eligible_post_daca) + daca_eligible + post_daca + age^2 + years_of_education + male + married + unemployed
+                 | year + puma + age_of_entry, data = sample_3)
+
+# plotting linear time trend
+iplot(est_did_pernp,
+      main = "Effect on Income",
+      xlab = "Year")
+
+# creating DiD
+est_did_pernp_log <- feols(log(pernp + 1) ~ i(factor_var = year, var = interaction_daca_eligible_post_daca) + daca_eligible + post_daca + age^2 + years_of_education + male + married + unemployed | year + puma, data = sample_3)
+
+# plotting linear time trend
+iplot(est_did_pernp_log,
+      main = "Effect on Log(income + 1)",
+      xlab = "Year")
+
+
+# creating DiD
+est_did_wkhp <- feols(wkhp ~ i(factor_var = year, var = interaction_daca_eligible_post_daca) + daca_eligible + post_daca + age^2 + years_of_education + male + married + unemployed
+                 | year + puma, data = sample_3)
+
+# plotting linear time trend
+iplot(est_did_wkhp,
+      main = "Effect on Hours Worked per Week",
+      xlab = "Year")
+
+# creating DiD
+est_did_attended_college <- feols(attended_college ~ i(factor_var = year, var = interaction_daca_eligible_post_daca) + daca_eligible + post_daca + years_of_education + male + married + unemployed | year + puma, data = sample_3)
+
+# plotting linear time trend
+iplot(est_did_attended_college,
+      main = "Effect on College Attendance",
+      xlab = "Year")
+
+# creating DiD
+est_did_working <- feols(working ~ i(factor_var = year, var = interaction_daca_eligible_post_daca) + daca_eligible + post_daca + age^2 + years_of_education + male + married + unemployed | year + puma, data = sample_3)
+
+# plotting linear time trend
+iplot(est_did_working,
+      main = "Effect on Working",
+      xlab = "Year")
+
+# creating DiD
+est_did_unemployed <- feols(unemployed ~ i(factor_var = year, var = interaction_daca_eligible_post_daca) + daca_eligible + post_daca + age^2 + years_of_education + male + married + unemployed | year + puma, data = sample_3)
+
+# plotting linear time trend
+iplot(est_did_unemployed,
+      main = "Effect on Unemployment",
+      xlab = "Year")
+
+# creating DiD
+est_did_self_employed <- feols(self_employed ~ i(factor_var = year, var = interaction_daca_eligible_post_daca) + daca_eligible + post_daca + age^2 + years_of_education + male + married + unemployed | year + puma, data = sample_3)
+
+# plotting linear time trend
+iplot(est_did_self_employed,
+      main = "Effect on Self Employment",
+      xlab = "Year")
+
+# creating DiD
+est_did_hs <- feols(high_school_and_equiv ~ i(factor_var = year, var = interaction_daca_eligible_post_daca) + daca_eligible + post_daca + years_of_education + male + married + unemployed | year + puma, data = sample_3)
+
+# plotting linear time trend
+iplot(est_did_hs,
+      main = "Effect on High School or Equivalent",
+      xlab = "Year")
+
+# creating DiD
+est_did_ged <- feols(ged ~ i(factor_var = year, var = interaction_daca_eligible_post_daca) + daca_eligible + post_daca + years_of_education + male + married + unemployed | year + puma, data = sample_3)
+
+# plotting linear time trend
+iplot(est_did_ged,
+      main = "Effect on GED",
+      xlab = "Year")
+```
+
+# Regression without control
+### Working (dummy variable)
+```{r}
+# creating DiD
+did_sample_3_working_no_cont <- lm(working ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca, data = sample_3)
+```
+
+
+### Unemployed
+```{r}
+# creating DiD
+did_sample_3_unemployed_no_cont <- lm(unemployed ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca, data = sample_3)
+```
+
+
+### Income: pernp
+```{r}
+# creating DiD
+did_sample_3_pernp_no_cont <- lm(pernp ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca, data = sample_3)
+```
+
+
+### Income: log(pernp + 1)
+```{r}
+did_sample_3_pernp_log_no_cont <- lm(log(pernp + 1) ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca, data = sample_3)
+```
+
+
+### Hours per week: wkhp
+```{r}
+# creating DiD
+did_sample_3_wkhp_no_cont <- lm(wkhp ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca, data = sample_3)
+```
+
+
+### Self-employed
+```{r}
+# creating DiD
+did_sample_3_self_employed_no_cont <- lm(self_employed ~ interaction_daca_eligible_post_daca +
+                                              daca_eligible + post_daca, data = sample_3)
+```
+
+
+### high school or equivalent
+```{r}
+# creating DiD
+did_sample_3_hs_or_equiv_no_cont <- lm(high_school_and_equiv ~ interaction_daca_eligible_post_daca + daca_eligible + post_daca, data = sample_3)
+```
+
+
+### regular high school degree only
+```{r}
+did_sample_3_hs_only_no_cont <- lm(hs_only ~ interaction_daca_eligible_post_daca + daca_eligible +
+                                post_daca, data = sample_3)
+```
+
+
+### GED
+```{r}
+# creating DiD
+did_sample_3_ged_no_cont <- lm(ged ~ interaction_daca_eligible_post_daca + daca_eligible +
+                   post_daca, data = sample_3)
+```
+
+
+### Attended college
+```{r}
+# creating DiD
+did_sample_3_attend_college_no_cont <- lm(attended_college  ~ interaction_daca_eligible_post_daca +
+                                       daca_eligible + post_daca, data = sample_3)
+```
+
+
+```{r}
+# getting coefficient names to rename
+coef_names <- c("daca eligible * post daca", "daca eligible")
+
+# create panel
+labor_models_no_control <- list(
+    "Worked" = did_sample_3_working_no_cont,
+    "Unemployed" = did_sample_3_unemployed_no_cont,
+    "Income" = did_sample_3_pernp_no_cont,
+    "Hours Worked" = did_sample_3_wkhp_no_cont,
+    "Self Employed" = did_sample_3_self_employed_no_cont
+)
+
+education_models_no_control <- list(
+    #"High School or Equivalent" = did_sample_3_hs_or_equiv_no_cont,
+    #"High School Only" = did_sample_3_hs_only_no_cont,
+    "GED" = did_sample_3_ged_no_cont,
+    "Attended College" = did_sample_3_attend_college_no_cont
+)
+
+# creating reg output panels
+### separate labor outcomes
+modelsummary(
+  labor_models_no_control,
+  coef_omit = c(-1, -2),
+  coef_rename = coef_names,
+  estimate = "{estimate}{stars}",
+  gof_map = c("nobs", "r.squared"),
+  stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  title = "Non-Citizen Mexicans Ages 18-40: Labor Outcomes",
+  notes = "This table reports the estimate from the DiD equation without controls and fixed effects. ***Significant at the 1% level. **Significant at the 5% level. *Significant at the 10% Level."
+)
+
+### educational outcomes
+modelsummary(
+  education_models_no_control,
+  coef_omit = c(-1, -2),
+  coef_rename = coef_names,
+  estimate = "{estimate}{stars}",
+  gof_map = c("nobs", "r.squared"),
+  stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  title = "Non-Citizen Mexicans Ages 18-40: Educational Outcomes",
+  notes = "This table reports the estimate from the DiD equation without controls and fixed effects. ***Significant at the 1% level. **Significant at the 5% level. *Significant at the 10% Level."
+)
+```
+
+# Pre-trends table
+
+### Working (dummy variable)
+```{r}
+# creating DiD
+did_sample_3_working_check <- feols(working ~ i(year, daca_eligible, 2012) + daca_eligible +
+                   post_daca + age + years_of_education + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### Unemployed
+```{r}
+# creating DiD
+did_sample_3_unemployed_check <- feols(unemployed ~ i(year, daca_eligible, 2012) + daca_eligible +
+                   post_daca + age + years_of_education + male + married | year +
+                     puma, data = sample_3)
+```
+
+
+### Income: pernp
+```{r}
+# creating DiD
+did_sample_3_pernp_check <- feols(pernp ~ i(year, daca_eligible, 2012) + daca_eligible +
+                   post_daca + age^2 + years_of_education + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### Income: log(pernp + 1)
+```{r}
+did_sample_3_pernp_log_check <- feols(log(pernp + 1) ~ i(year, daca_eligible, 2012) + daca_eligible +
+                   post_daca + age^2 + years_of_education + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### Hours per week: wkhp
+```{r}
+# creating DiD
+did_sample_3_wkhp_check <- feols(wkhp ~ i(year, daca_eligible, 2012) + daca_eligible +
+                   post_daca + age + years_of_education + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### Self-employed
+```{r}
+# creating DiD
+did_sample_3_self_employed_check <- feols(self_employed ~ i(year, daca_eligible, 2012) + daca_eligible +
+                   post_daca + age + years_of_education + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### high school or equivalent
+```{r}
+# creating DiD
+did_sample_3_hs_or_equiv_check <- feols(high_school_and_equiv ~ i(year, daca_eligible, 2012) + daca_eligible +
+                   post_daca + age + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### regular high school degree only
+```{r}
+did_sample_3_hs_only_check <- feols(hs_only ~ i(year, daca_eligible, 2012) + daca_eligible +
+                                post_daca + age + male + married +
+                                unemployed | year + puma, data = sample_3)
+```
+
+
+### GED
+```{r}
+# creating DiD
+did_sample_3_ged_check <- feols(ged ~ i(year, daca_eligible, 2012) + daca_eligible +
+                   post_daca + age + male + married +
+                   unemployed | year + puma, data = sample_3)
+```
+
+
+### Attended college
+```{r}
+# creating DiD
+did_sample_3_attend_college_check <- feols(attended_college  ~ i(year, daca_eligible, 2012) +
+                                       daca_eligible + post_daca + age + male + 
+                                       married + age + unemployed | year
+                                     + puma, data = sample_3)
+iplot(did_sample_3_wkhp_check)
+```
+
+
+```{r}
+# getting coefficient names to rename
+coef_names <- c("Eligible * 2008", "Eligible * 2009", "Eligible * 2010", "Eligible * 2011",
+                "Eligible * 2013", "Eligible * 2014", "Eligible * 2015", "Eligible * 2016",
+                "Eligible * 2017", "Eligible * 2018", "Eligible * 2019", "Eligible * 2021")
+
+# create panel
+models <- list(
+    "Worked" = did_sample_3_working_check,
+    "Unemployed" = did_sample_3_unemployed_check,
+    "Income" = did_sample_3_pernp_check,
+    #"Log(Income + 1)" = did_sample_3_pernp_log_check,
+    "Hours Worked" = did_sample_3_wkhp_check,
+    "Self Employed" = did_sample_3_self_employed_check,
+    #"High School or Equivalent" = did_sample_3_hs_or_equiv_check,
+    #"High School Only" = did_sample_3_hs_only_check,
+    "GED" = did_sample_3_ged_check,
+    "Attended College" = did_sample_3_attend_college_check
+)
+
+#### solid starting point for pre-trends table here
+###### remove everything except the years
+modelsummary(models,
+             coef_omit = c(-1:-12),
+             coef_rename = coef_names,
+             estimate = "{estimate}{stars}",
+             gof_map = c("nobs", "r.squared", "vcov.type"),
+             stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+             title = "Pre Trends",
+             notes = "This table reports the estimate with eligible interacted with each year. The 2012 interaction is the omitted interaction. The DiD equation contains all controls and fixed effects. \n***Significant at the 1% level. **Significant at the 5% level. *Significant at the 10% Level.")
+
+
+# plots
+iplot(did_sample_3_working_check,
+      main = "Pre Trends: Worked")
+iplot(did_sample_3_unemployed_check,
+      main = "Pre Trends: Unemployed")
+iplot(did_sample_3_pernp_check,
+      main = "Pre Trends: Income")
+iplot(did_sample_3_wkhp_check,
+      main = "Pre Trends: Hours Worked Per Week")
+iplot(did_sample_3_self_employed_check,
+      main = "Pre Trends: Self Employed")
+iplot(did_sample_3_ged_check,
+      main = "Pre Trends: GED")
+iplot(did_sample_3_attend_college_check,
+      main = "Pre Trends: Attended College")
+
+```
+
+

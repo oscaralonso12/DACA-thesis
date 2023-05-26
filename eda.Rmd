@@ -1,0 +1,593 @@
+---
+title: "eda"
+author: "Oscar Alonso"
+date: "2023-03-24"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE)
+```
+
+- Outcome Variables of Interest
+  - Income: WAGP, PERNP
+  - Hours worked: WKHP, COW
+  - Education: SCHL
+  
+- DACA eligibility criteria:
+  - Under the age of 31 as of June 15, 2012 (Born on or after 6/16/1981);
+  - Came to the United States before their 16th birthday;
+  - Have continuously resided in the United States since June 15, 2007, up to the present time;
+  - Were physically present in the United States on June 15, 2012, and at the time of making their request for consideration of deferred action with USCIS;
+  - Had no lawful status on June 15, 2012;
+  - Are currently in school, have graduated or obtained a certificate of completion from high school, have obtained a general education development (GED) certificate, or are an honorably discharged veteran of the Coast Guard or Armed Forces of the United States; and
+  - Have not been convicted of a felony, significant misdemeanor, or three or more other misdemeanors, and do not otherwise pose a threat to national security or public safety.
+  
+- Variables to control for
+  - Pre-existing differences in education levels, income, and other socioeconomic factors between DACA-eligible and ineligible individuals prior to DACA implementation.
+  
+  - Changes in immigration policy and enforcement during the DACA implementation period, which could affect outcomes for both DACA-eligible and ineligible individuals.
+  
+  - The timing of the survey and potential changes in economic or social conditions during the survey period that could affect outcomes.
+  
+  - Differences in the composition of the Mexican population before and after DACA implementation, such as changes in age distribution or geographic location.
+  
+  - The potential for selection bias if individuals who apply for DACA differ systematically from those who do not.
+  
+  - Differences in the length of time spent in the U.S. between DACA-eligible and ineligible individuals, which could affect outcomes.
+  
+  - The potential for unmeasured variables that may affect outcomes and are correlated with DACA eligibility.
+
+- regression table output: https://www.jakeruss.com/cheatsheets/stargazer/
+- another example: look at qje https://www.jakeruss.com/cheatsheets/stargazer/
+
+```{r}
+# libraries
+library(tidyverse)
+library(tmap)
+library(tigris)
+options(tigris_use_cache = TRUE)
+library(modelsummary)
+
+# setwd
+setwd("~/Desktop/thesis/notebooks/")
+
+# importing data
+df <- read_csv("new_data/clean_non_cit_cali_2005_2021.csv")
+```
+
+```{r}
+# creating mexican only df
+mex_df <- df |> 
+  filter(hisp == 2) |> 
+  rename(age = agep)
+```
+
+# EDA
+```{r}
+# where do daca eligible people come from?
+df |> 
+  filter(daca_eligible == 1,
+         hisp_label != "not spanish/latino/hispanic",
+         hisp_label != "All Other Spanish/Hispanic/Latino") |> 
+  group_by(hisp_label) |> 
+  summarise(n = n()) |> 
+  arrange(-n) |> 
+  mutate(pct_share = n / sum(n)) |> 
+  head(5) |> 
+  ggplot(aes(x = fct_reorder(hisp_label, n), y = pct_share)) +
+  geom_col() +
+  scale_y_continuous(n.breaks = 10, labels = scales::percent_format()) +
+  coord_flip() +
+  labs(title = "Total Daca Eligible Hispanics in California by Country of Birth",
+       caption = "Source: American Community Survey") +
+  xlab(NULL) +
+  ylab("Total") +
+  ggthemes::theme_clean() +
+  theme(plot.margin = unit(c(1, 2, 1, 1), "cm"))
+```
+
+# Given that most daca eligible people come from Mexico, going to be using only Mexicans
+
+# creating map using pumas
+```{r}
+### create california map
+#### getting outline of CA pumas
+ca_pumas <- pumas("CA", year = 2018)
+
+#### plotting the outline of CA
+# plot(ca_pumas$geometry)
+
+### getting mex_df for map
+ca_data_for_map <- mex_df |> 
+  group_by(daca_eligible, puma) |> 
+  summarise(total_daca_eligible = sum(daca_eligible * pwgtp)) |> 
+  filter(!is.na(total_daca_eligible))
+
+# joining data
+ca_pumas <- ca_pumas |> 
+  mutate(puma = as.double(PUMACE10))
+
+joined_pumas <- ca_pumas %>%
+  left_join(ca_data_for_map, by = "puma")
+
+# creating map
+tm_shape(joined_pumas) + 
+  tm_polygons(col = "total_daca_eligible",
+              palette = "Reds",
+              border.alpha = 0.1,
+              title = "Total Mexican Daca Eligible People") + 
+  tm_layout(legend.outside = TRUE,
+            legend.outside.position = "right")
+
+#### top 10 PUMA areas where DACA people are located ####
+joined_pumas |> 
+  as.data.frame() |> 
+  select(NAMELSAD10, total_daca_eligible) |> 
+  arrange(-total_daca_eligible) |> 
+  head(10) |> 
+  mutate(pct_total_daca_share = total_daca_eligible / sum(total_daca_eligible)) |> 
+  ggplot(aes(x = fct_reorder(NAMELSAD10, total_daca_eligible),
+             y = pct_total_daca_share)) +
+  geom_col() + 
+  scale_y_continuous(labels = scales::percent_format()) +
+  coord_flip() +
+  labs(title = "Total Mexican DACA Eligible People by California PUMA",
+       subtitle = "Data as of 2021") +
+  xlab(NULL) +
+  ylab("Count") +
+  ggthemes::theme_clean()
+
+### top 10 counties with the largest % of DACA eligible people ###
+county_plot <- joined_pumas |> 
+  mutate(county = str_extract(str_to_lower(NAMELSAD10), ".*(?=county)")) |>
+  select(county, daca_eligible, total_daca_eligible) |> 
+  data_frame() |>
+  group_by(county) |> 
+  summarise(total = sum(total_daca_eligible)) |> 
+  mutate(prop = total / sum(total)) |> 
+  arrange(-prop) |> 
+  head(10) |> 
+  ggplot(aes(x = fct_reorder(county, prop), y = prop)) +
+  geom_col() +
+  geom_text(aes(label = paste0(scales::percent(prop), "\n")), hjust = 1, 
+            vjust = 0.8, color = "white", size = 3) +
+  scale_y_continuous(n.breaks = 15, labels = scales::percent_format()) +
+  xlab("County") +
+  ylab("Proportion") +
+  labs(title = "Percent of DACA Eligible People by County",
+       subtitle = "Most are located in southern California") +
+  coord_flip() +
+  ggthemes::theme_clean()
+```
+
+# creating tables and plots
+```{r}
+### Creating data summary df ###
+mex_df_summary <- mex_df |> 
+  mutate(daca_eligible_label = ifelse(daca_eligible == 1, "Daca Eligible", "Ineligible")) |>
+  select(daca_eligible_label, age, age_of_entry, yoep, pernp,
+         wkhp, years_of_education, years_living_in_us) |> 
+  rename(
+    'age of entry' = age_of_entry,
+    'year of entry' = yoep,
+    income = pernp,
+    'hours worked per week' = wkhp,
+    'years of education' = years_of_education,
+    'years living in US' = years_living_in_us
+  )
+
+# creating data summary table
+datasummary_balance(
+  ~daca_eligible_label,
+  data = mex_df_summary,
+  fmt = 0,
+  title = "Non-citizen Mexican DACA Eligible vs. Ineligible in California",
+  stars = c('*' = .1, '**' = .05, '***' = 0.01),
+  notes = "***Significant at the 1% level. **Significant at the 5% level. *Significant at the 10% Level.",
+  dinm_statistic = "p.value"
+)
+
+
+# creating income table
+income_table <- mex_df |> 
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18) |> 
+  group_by(survey_year, daca_eligible) |> 
+  summarise(mean_income = mean(pernp, na.rm = T),
+            se_income = sd(pernp, na.rm = T) / sqrt(n())) |> 
+  pivot_wider(names_from = daca_eligible, values_from = c(mean_income, se_income)) |> 
+  # rename(non_eligible = '0',
+  #        eligible = '1',
+  #        non_eligible_se = '0',
+  #        eligible_se = '1') |> 
+  mutate(eligible_minus_non = mean_income_1 - mean_income_0,
+         eligible_minus_non_se = sqrt(se_income_1^2 + se_income_0^2)) |> 
+  select(survey_year, eligible_minus_non, eligible_minus_non_se)
+
+ # plotting income table
+  income_table |> 
+    filter(survey_year >= 2008) |> 
+    ggplot(aes(x = survey_year, y = eligible_minus_non)) +
+    geom_line(size = 1) +
+    geom_point() +
+    geom_errorbar(aes(ymin = eligible_minus_non - eligible_minus_non_se,
+                    ymax = eligible_minus_non + eligible_minus_non_se)) +
+    scale_x_continuous(n.breaks = 20) +
+    scale_y_continuous(labels = scales::dollar_format(), n.breaks = 10) +
+    geom_rect(xmin = 2012, xmax = 2013, ymin = -Inf, ymax = Inf,
+              fill = "gray40", alpha = 0.05) +
+    geom_hline(yintercept = 0, color = "red") +
+    labs(title = "Income") +
+    xlab("Year") +
+    ylab("Difference Between Eligible and Ineligible") +
+    ggthemes::theme_clean() +
+    theme(axis.text.y = element_text(size = 12),
+          axis.text.x = element_text(size = 12),
+          axis.title.y = element_text(size = 18),
+          axis.title.x = element_text(size = 18))
+  
+# creating income table
+income_log_table <- mex_df |> 
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18) |> 
+  group_by(survey_year, daca_eligible) |> 
+  mutate(income_log = log(pernp + 1)) |> 
+  summarise(mean_income = mean(income_log, na.rm = T)) |> 
+  pivot_wider(names_from = daca_eligible, values_from = mean_income) |> 
+  rename(non_eligible = '0',
+         eligible = '1') |> 
+  mutate(eligible_minus_non = eligible - non_eligible) |> 
+  select(survey_year, eligible_minus_non)
+
+ # plotting income table
+income_log_table |> 
+  filter(survey_year >= 2008) |> 
+  ggplot(aes(x = survey_year, y = eligible_minus_non)) +
+  geom_line(size = 1) +
+  geom_point() +
+  scale_x_continuous(n.breaks = 20) +
+  scale_y_continuous(labels = scales::dollar_format(), n.breaks = 10) +
+  geom_rect(xmin = 2012, xmax = 2013, ymin = -Inf, ymax = Inf,
+            fill = "gray40", alpha = 0.05) +
+  labs(title = "Log(Income + 1)") +
+  xlab("Year") +
+  ylab("Difference Between Eligible and Ineligible") +
+  ggthemes::theme_clean()
+
+# creating hours worked table
+wkhp_table <- mex_df |> 
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18) |> 
+  group_by(survey_year, daca_eligible) |> 
+  summarise(mean_wkhp = mean(wkhp, na.rm = T),
+            se = sd(wkhp, na.rm = T) / sqrt(n())) |> 
+  pivot_wider(names_from = daca_eligible, values_from = c(mean_wkhp, se)) |> 
+  # rename(non_eligible = '0',
+  #        eligible = '1') |> 
+  mutate(eligible_minus_non = mean_wkhp_1 - mean_wkhp_0,
+         se_wkhp = sqrt(se_1^2 + se_0^2)) |> 
+  select(survey_year, eligible_minus_non, se_wkhp)
+
+# plotting hours worked table
+wkhp_table |> 
+  filter(survey_year >= 2008) |> 
+  ggplot(aes(x = survey_year, y = eligible_minus_non)) +
+    geom_line(size = 1) +
+    geom_point() +
+    geom_errorbar(aes(ymin = eligible_minus_non - se_wkhp,
+                    ymax = eligible_minus_non + se_wkhp)) +
+    scale_x_continuous(n.breaks = 20) +
+    geom_rect(xmin = 2012, xmax = 2013, ymin = -Inf, ymax = Inf,
+              fill = "gray40", alpha = 0.05) +
+    geom_hline(yintercept = 0, color = "red") +
+    labs(title = "Hours Worked Per Week") +
+    xlab("Year") +
+    ylab("Difference Between Eligible and Ineligible") +
+    ggthemes::theme_clean() +
+    theme(axis.text.y = element_text(size = 12),
+          axis.text.x = element_text(size = 12),
+          axis.title.y = element_text(size = 18),
+          axis.title.x = element_text(size = 18))
+
+# creating fraction in college
+fraction_college_table <- mex_df |> 
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18) |> 
+  group_by(survey_year, daca_eligible) |> 
+  summarise(fraction_atten_college = sum(attended_college == 1) / n(),
+            se = sd(attended_college, na.rm = T) / sqrt(n())) |> 
+  pivot_wider(names_from = daca_eligible, values_from = c(fraction_atten_college, se)) |> 
+  # rename(non_eligible = '0',
+  #        eligible = '1') |> 
+  mutate(eligible_minus_non = fraction_atten_college_1 - fraction_atten_college_0,
+         se = sqrt(se_1^2 + se_0^2)) |> 
+  select(survey_year, eligible_minus_non, se)
+
+get_table <- function(df, var) {
+  {{ df }} |> 
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18) |> 
+  group_by(survey_year, daca_eligible) |> 
+  summarise(fraction = sum({{ var }} == 1) / n(),
+            se = sd({{ var }}, na.rm = T) / sqrt(n())) |> 
+  pivot_wider(names_from = daca_eligible, values_from = c(fraction, se)) |> 
+  # rename(non_eligible = '0',
+  #        eligible = '1') |> 
+  mutate(eligible_minus_non = fraction_1 - fraction_0,
+         se = sqrt(se_1^2 + se_0^2)) |> 
+  select(survey_year, eligible_minus_non, se)
+}
+
+# creating fraction working
+fraction_working_table <- mex_df |> 
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18) |> 
+  group_by(survey_year, daca_eligible) |> 
+  summarise(fraction_working = sum(working == 1) / n()) |> 
+  pivot_wider(names_from = daca_eligible, values_from = fraction_working) |> 
+  rename(non_eligible = '0',
+         eligible = '1') |> 
+  mutate(eligible_minus_non = eligible - non_eligible) |> 
+  select(survey_year, eligible_minus_non)
+
+get_table(mex_df, working)
+
+# plotting fraction working table
+get_table(mex_df, working) |> 
+  filter(survey_year >= 2008) |> 
+  ggplot(aes(x = survey_year, y = eligible_minus_non)) +
+    geom_line(size = 1) +
+    geom_point() +
+    geom_errorbar(aes(ymin = eligible_minus_non - se,
+                  ymax = eligible_minus_non + se)) +
+    scale_x_continuous(n.breaks = 20) +
+    scale_y_continuous(n.breaks = 10, limits = c(-0.1, 0.1)) +
+    geom_rect(xmin = 2012, xmax = 2013, ymin = -Inf, ymax = Inf,
+              fill = "gray40", alpha = 0.05) +
+    geom_hline(yintercept = 0, color = "red") +
+    labs(title = "Fraction Worked") +
+    xlab("Year") +
+    ylab("Difference Between Eligible and Ineligible") +
+    ggthemes::theme_clean() +
+    theme(axis.text.y = element_text(size = 12),
+          axis.text.x = element_text(size = 12),
+          axis.title.y = element_text(size = 18),
+          axis.title.x = element_text(size = 18))
+
+# creating fraction unemployed
+fraction_unemployed_table <- mex_df |> 
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18) |> 
+  group_by(survey_year, daca_eligible) |> 
+  summarise(fraction_unemployed = sum(unemployed == 1) / n()) |> 
+  pivot_wider(names_from = daca_eligible, values_from = fraction_unemployed) |> 
+  rename(non_eligible = '0',
+         eligible = '1') |> 
+  mutate(eligible_minus_non = eligible - non_eligible) |> 
+  select(survey_year, eligible_minus_non)
+
+get_table(mex_df, unemployed)
+
+# plotting fraction unemployed table
+get_table(mex_df, unemployed) |> 
+  filter(survey_year >= 2008) |> 
+  ggplot(aes(x = survey_year, y = eligible_minus_non)) +
+    geom_line(size = 1) +
+    geom_point() +
+    geom_errorbar(aes(ymin = eligible_minus_non - se,
+                      ymax = eligible_minus_non + se)) +
+    scale_x_continuous(n.breaks = 20) +
+    scale_y_continuous(n.breaks = 10, limits = c(-0.08, 0.08)) +
+    geom_rect(xmin = 2012, xmax = 2013, ymin = -Inf, ymax = Inf,
+              fill = "gray40", alpha = 0.05) +
+  geom_hline(yintercept = 0, color = "red") +
+    labs(title = "Fraction Unemployed") +
+    xlab("Year") +
+    ylab("Difference Between Eligible and Ineligible") +
+    ggthemes::theme_clean() +
+    theme(axis.text.y = element_text(size = 12),
+          axis.text.x = element_text(size = 12),
+          axis.title.y = element_text(size = 18),
+          axis.title.x = element_text(size = 18))
+
+# creating fraction self employed
+fraction_self_employed_table <- mex_df |> 
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18) |> 
+  group_by(survey_year, daca_eligible) |> 
+  summarise(fraction_self_employed = sum(self_employed == 1) / n()) |> 
+  pivot_wider(names_from = daca_eligible, values_from = fraction_self_employed) |> 
+  rename(non_eligible = '0',
+         eligible = '1') |> 
+  mutate(eligible_minus_non = eligible - non_eligible) |> 
+  select(survey_year, eligible_minus_non)
+
+get_table(mex_df, self_employed)
+
+# plotting fraction self employed
+get_table(mex_df, self_employed) |> 
+  filter(survey_year >= 2008) |> 
+  ggplot(aes(x = survey_year, y = eligible_minus_non)) +
+    geom_line(size = 1) +
+    geom_point() +
+    geom_errorbar(aes(ymin = eligible_minus_non - se,
+                      ymax = eligible_minus_non + se)) +
+    scale_x_continuous(n.breaks = 20) +
+    scale_y_continuous(n.breaks = 10, limits = c(-0.1, 0.1)) +
+    geom_rect(xmin = 2012, xmax = 2013, ymin = -Inf, ymax = Inf,
+              fill = "gray40", alpha = 0.05) +
+    geom_hline(yintercept = 0, color = "red") +
+    labs(title = "Fraction Self Employed") +
+    xlab("Year") +
+    ylab("Difference Between Eligible and Ineligible") +
+    ggthemes::theme_clean() +
+    theme(axis.text.y = element_text(size = 12),
+          axis.text.x = element_text(size = 12),
+          axis.title.y = element_text(size = 18),
+          axis.title.x = element_text(size = 18))
+
+# creating hs and quiv working
+fraction_hs_table <- mex_df |> 
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18) |> 
+  group_by(survey_year, daca_eligible) |> 
+  summarise(fraction_hs = sum(high_school_and_equiv == 1) / n()) |> 
+  pivot_wider(names_from = daca_eligible, values_from = fraction_hs) |> 
+  rename(non_eligible = '0',
+         eligible = '1') |> 
+  mutate(eligible_minus_non = eligible - non_eligible) |> 
+  select(survey_year, eligible_minus_non)
+
+# plotting hs and equiv
+fraction_hs_table |> 
+  filter(survey_year >= 2008) |> 
+  ggplot(aes(x = survey_year, y = eligible_minus_non)) +
+    geom_line(size = 1) +
+    geom_point() +
+    scale_x_continuous(n.breaks = 20) +
+    scale_y_continuous(n.breaks = 10, limits = c(0, 0.4)) +
+    geom_rect(xmin = 2012, xmax = 2013, ymin = -Inf, ymax = Inf,
+              fill = "gray40", alpha = 0.05) +
+    labs(title = "Fraction High School and Equivalent") +
+    xlab("Year") +
+    ylab("Difference Between Eligible and Ineligible") +
+    ggthemes::theme_clean()
+
+# creating ged working
+fraction_ged_table <- mex_df |> 
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18) |> 
+  group_by(survey_year, daca_eligible) |> 
+  summarise(fraction_ged = sum(ged == 1) / n()) |> 
+  pivot_wider(names_from = daca_eligible, values_from = fraction_ged) |> 
+  rename(non_eligible = '0',
+         eligible = '1') |> 
+  mutate(eligible_minus_non = eligible - non_eligible) |> 
+  select(survey_year, eligible_minus_non)
+
+get_table(mex_df, ged)
+
+# plotting fraction ged table
+get_table(mex_df, ged) |> 
+  filter(survey_year >= 2008) |> 
+  ggplot(aes(x = survey_year, y = eligible_minus_non)) +
+    geom_line(size = 1) +
+    geom_point() +
+    geom_errorbar(aes(ymin = eligible_minus_non - se,
+                      ymax = eligible_minus_non + se)) +
+    scale_x_continuous(n.breaks = 20) +
+    scale_y_continuous(n.breaks = 10, limits = c(-0.1, 0.1)) +
+    geom_rect(xmin = 2012, xmax = 2013, ymin = -Inf, ymax = Inf,
+              fill = "gray40", alpha = 0.05) +
+    geom_hline(yintercept = 0, color = "red") +
+    labs(title = "Fraction GED") +
+    xlab("Year") +
+    ylab("Difference Between Eligible and Ineligible") +
+    ggthemes::theme_clean() +
+    theme(axis.text.y = element_text(size = 12),
+          axis.text.x = element_text(size = 12),
+          axis.title.y = element_text(size = 18),
+          axis.title.x = element_text(size = 18))
+
+get_table(mex_df, attended_college)
+
+# plotting fraction college table
+get_table(mex_df, attended_college) |> 
+  filter(survey_year >= 2008) |> 
+  ggplot(aes(x = survey_year, y = eligible_minus_non)) +
+    geom_line(size = 1) +
+    geom_point() +
+    geom_errorbar(aes(ymin = eligible_minus_non - se,
+                 ymax = eligible_minus_non + se)) +
+    geom_hline(yintercept = 0, color = "red") +
+    scale_x_continuous(n.breaks = 20) +
+    scale_y_continuous(n.breaks = 10, limits = c(0, 0.4)) +
+    geom_rect(xmin = 2012, xmax = 2013, ymin = -Inf, ymax = Inf,
+              fill = "gray40", alpha = 0.05) +
+    labs(title = "Fraction College") +
+    xlab("Year") +
+    ylab("Difference Between Eligible and Ineligible") +
+    ggthemes::theme_clean() +
+    theme(axis.text.y = element_text(size = 12),
+          axis.text.x = element_text(size = 12),
+          axis.title.y = element_text(size = 18),
+          axis.title.x = element_text(size = 18))
+```
+
+# Extra
+
+```{r}
+mex_df <- mex_df |> 
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18,
+         survey_year >= 2008) |> 
+  mutate(daca_eligible_label = ifelse(daca_eligible == 1, "daca eligible", "ineligible"))
+
+mex_df |>
+  group_by(survey_year, daca_eligible_label) |> 
+  summarise(avg_y = mean(pernp)) |> 
+  ggplot(aes(x = survey_year, y = avg_y, color = daca_eligible_label)) +
+  geom_line() +
+  geom_vline(xintercept = 2013) +
+  scale_x_continuous(n.breaks = 20) +
+  ylim(0, 30000)
+```
+
+
+```{r}
+### Creating data summary df ###
+mex_df_summary <- mex_df |> 
+  mutate(daca_eligible_label = ifelse(daca_eligible == 1, "Daca Eligible", "Ineligible")) |>
+  filter(between(birth_year, 1981, 2005),
+         qtrbir >= 2,
+         age >= 18,
+         survey_year >= 2008) |> 
+  select(daca_eligible_label, age, age_of_entry, yoep, pernp,
+         wkhp, years_of_education, years_living_in_us) |> 
+  rename(
+    'age of entry' = age_of_entry,
+    'year of entry' = yoep,
+    income = pernp,
+    'hours worked per week' = wkhp,
+    'years of education' = years_of_education,
+    'years living in US' = years_living_in_us
+  )
+
+# creating data summary table
+datasummary_balance(
+  ~daca_eligible_label,
+  data = mex_df_summary,
+  title = "Non-citizen Mexicans Ages 18-40: DACA Eligible vs. Ineligible in California",
+  stars = c('*' = .1, '**' = .05, '***' = 0.01),
+  fmt = 2,
+  notes = "***Significant at the 1% level. **Significant at the 5% level. *Significant at the 10% Level.",
+  dinm_statistic = "p.value"
+)
+```
+
+# Daca eligible vs ineligible distribution across time
+```{r}
+mex_df |> 
+  group_by(daca_eligible, daca_eligible_label, survey_year) |> 
+  count() |> 
+  ggplot(aes(x = survey_year, y = n, fill = daca_eligible_label)) +
+  geom_col(position = "dodge") +
+  scale_x_continuous(n.breaks = 19)
+```
+
