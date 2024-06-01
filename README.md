@@ -30,7 +30,8 @@ The results highlight significant labor market improvements among DACA-eligible 
 
 ![reg_labor_control](https://github.com/oscaralonso12/DACA-thesis/assets/41983149/af7725fc-b3eb-4ab8-8425-04563a346f11)
 ![reg_education_controls](https://github.com/oscaralonso12/DACA-thesis/assets/41983149/957f7517-e83b-43ff-ad6b-e2f1d391f7ee)
-![did_trend_income](https://github.com/oscaralonso12/DACA-thesis/assets/41983149/f0807ffe-37fe-4959-9441-207e5fa6bbc7)
+<img width="893" alt="Screenshot 2024-06-01 at 2 15 10 AM" src="https://github.com/oscaralonso12/DACA-thesis/assets/41983149/0a1a6b9d-10f5-45da-93a5-46ceddb8309b">
+
 
 
 ### 6. Conclusion and Summary
